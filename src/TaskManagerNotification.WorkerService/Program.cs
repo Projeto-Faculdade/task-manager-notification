@@ -1,7 +1,8 @@
 using TaskManagerNotification.WorkerService;
 
 var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddHostedService<Worker>();
+var services = builder.Services;
+services.AddHostedService<Worker>();
 
 var host = builder.Build();
 host.Run();
