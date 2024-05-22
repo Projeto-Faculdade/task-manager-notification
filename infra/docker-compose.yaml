@@ -1,0 +1,15 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+      - 15672:15672
+      - 5672:5672
+    volumes:
+      - /data/:/var/lib/rabbitmq/
+
+volumes:
+    logs-folder:
+        name: log_rabbitmq_management
+        driver: local
