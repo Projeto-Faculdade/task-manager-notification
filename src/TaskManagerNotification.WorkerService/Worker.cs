@@ -1,93 +1,50 @@
 using System.Text;
 using System.Text.Json;
-using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
-using SendGrid;
-using SendGrid.Helpers.Mail;
+using TaskManagerNotification.WorkerService.BrokerMesage;
+using TaskManagerNotification.WorkerService.Emails;
 
 namespace TaskManagerNotification.WorkerService;
 
-public class Worker(
+internal class Worker(
     ILogger<Worker> logger,
-    IConfiguration configuration)
+    RabbitMqBrokerService mqBrokerService,
+    EmailService emailService)
     : BackgroundService
 {
-
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
-        await SendEmail(cancellationToken);
-        using var channel = GetChanell();
-
-        channel.QueueDeclare(queue: "test",
-                             durable: true,
-                             exclusive: false,
-                             autoDelete: false,
-                             arguments: null);
-
-        for (int i = 0; i < 10; i++)
-        {
-            var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new Test(i)));
-            channel.BasicPublish(exchange: string.Empty,
-                 routingKey: "test",
-                 body: body);
-
-            logger.LogInformation("Publlish {@Id}", i);
-        }
+        using var channel = mqBrokerService.CreateQueueIfNotExists();
 
         await base.StartAsync(cancellationToken);
     }
 
-    private async Task SendEmail(CancellationToken cancellationToken)
-    {
-        var client = new SendGridClient(configuration["SendGrid:ApiKey"]);
-        var from = new EmailAddress(configuration["SendGrid:Sender"], "Example User");
-
-        var tos = new List<EmailAddress>
-        {
-            new("email@hotmail.com", "Example User")
-        };
-
-        var subject = "Sending with SendGrid is Fun";
-        var plainTextContent = "and easy to do anywhere, even with C#";
-        var htmlContent = "<strong>and easy to do anywhere, even with C#</strong>";
-        var msg = MailHelper.CreateSingleEmailToMultipleRecipients(from, tos, subject, plainTextContent, htmlContent);
-        var response = await client.SendEmailAsync(msg, cancellationToken);
-
-        logger.LogInformation("Sendgrig {@Status}", response.StatusCode);
-    }
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        using var channel = GetChanell();
+        var consumer = mqBrokerService.Consummer();
 
-        var consumer = new EventingBasicConsumer(channel);
-
-        consumer.Received += ConsumerRecived;
-        channel.BasicConsume(queue: "test",
-                             autoAck: true,
-                             consumer: consumer);
+        consumer.Received += ConsumerRecivedAsync;
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            logger.LogInformation("Worker ativo");
+            logger.LogInformation("Worker ativo {@Runing}", consumer.IsRunning);
             await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
         }
     }
 
-    private static IModel GetChanell()
-    {
-        var factory = new ConnectionFactory { HostName = "localhost" };
-        var connection = factory.CreateConnection();
-        var channel = connection.CreateModel();
-        return channel;
-    }
-
-    private void ConsumerRecived(object? sender, BasicDeliverEventArgs ea)
+    private async Task ConsumerRecivedAsync(object? sender, BasicDeliverEventArgs ea)
     {
         var body = ea.Body.ToArray();
         var message = Encoding.UTF8.GetString(body);
-        logger.LogWarning("Received message: {@Message}", message);
-    }
+        var emailConfiguration = JsonSerializer.Deserialize<Message>(message)!;
 
-    private sealed record Test(int Id);
+        var email = IEmail.GetTemplate(emailConfiguration.EmailType);
+
+        email.Recipients = emailConfiguration.Recipients;
+#if SENDEMAIL
+        await emailService.SendEmail(email);
+#endif
+        logger.LogWarning("Received message: {@Message}", message);
+        await Task.Yield();
+    }
 }
