@@ -36,15 +36,16 @@ internal class Worker(
     {
         var body = ea.Body.ToArray();
         var message = Encoding.UTF8.GetString(body);
+        logger.LogWarning("Received message: {@Message}", message);
         var emailConfiguration = JsonSerializer.Deserialize<Message>(message)!;
 
         var email = IEmail.GetTemplate(emailConfiguration.EmailType);
 
         email.Recipients = emailConfiguration.Recipients;
 #if SENDEMAIL
+        logger.LogWarning("Send email to: {@Message}", email.Key);
         await emailService.SendEmail(email);
 #endif
-        logger.LogWarning("Received message: {@Message}", message);
         await Task.Yield();
     }
 }
